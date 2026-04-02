@@ -36,6 +36,8 @@ ALL_RECOMMENDED_ACTIONS = [
     "increase_thread_pool_size",
     "optimize_slow_queries",
     "enable_rate_limiting",
+    "update_configuration",      
+    "enable_circuit_breaker"
 ]
 
 # ============================================================
@@ -80,6 +82,132 @@ SCENARIO_DATABASE_OVERLOAD = {
         "severity": "critical",
         "affected_services": ["database", "user-service", "api-gateway"],
         "recommended_action": "increase_connection_pool_size",
+    },
+}
+
+SCENARIO_SSL_EXPIRED = {
+    "id": "ssl_certificate_expired",
+    "name": "SSL Certificate Expired",
+    "difficulty": "easy",
+    "alert": {
+        "title": "Connection failures to payment-service (100% error rate)",
+        "severity": "critical"
+    },
+    "services": ["api-gateway", "payment-service", "order-service"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Routing request to payment-service",
+            "[10:23:45] ERROR: SSL handshake failed with payment-service",
+            "[10:23:46] ERROR: certificate has expired",
+            "[10:23:47] ERROR: SSL handshake failed with payment-service",
+        ],
+        "payment-service": [
+            "[10:23:45] INFO: Service started on port 443",
+            "[10:23:45] WARN: SSL certificate expires in 0 days",
+            "[10:23:46] INFO: Incoming connection from api-gateway",
+            "[10:23:46] ERROR: TLS handshake error: certificate expired",
+        ],
+        "order-service": [
+            "[10:23:45] INFO: Processing order #12345",
+            "[10:23:46] INFO: Calling payment-service for payment",
+            "[10:23:47] ERROR: Payment request failed: connection error",
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 25.0, "memory_usage": 45.0, "error_rate": 35.0, "latency_p99": 100},
+        "payment-service": {"cpu_usage": 5.0, "memory_usage": 30.0, "error_rate": 100.0, "latency_p99": 10},
+        "order-service": {"cpu_usage": 40.0, "memory_usage": 55.0, "error_rate": 40.0, "latency_p99": 5000},
+    },
+    "ground_truth": {
+        "root_cause": "ssl_certificate_expired",
+        "severity": "critical",
+        "affected_services": ["payment-service", "api-gateway", "order-service"],
+        "recommended_action": "renew_ssl_certificate",
+    },
+}
+
+SCENARIO_DISK_FULL = {
+    "id": "disk_full",
+    "name": "Disk Full on Database Server",
+    "difficulty": "easy",
+    "alert": {
+        "title": "Database write failures (error rate: 100%)",
+        "severity": "critical"
+    },
+    "services": ["api-gateway", "user-service", "database"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Received POST /users/create",
+            "[10:23:46] ERROR: Upstream error from user-service: 500",
+            "[10:23:47] ERROR: Upstream error from user-service: 500",
+        ],
+        "user-service": [
+            "[10:23:45] INFO: Creating new user record",
+            "[10:23:45] ERROR: Database insert failed",
+            "[10:23:46] ERROR: DBError: could not write to database",
+            "[10:23:47] ERROR: Retrying insert... failed",
+        ],
+        "database": [
+            "[10:23:40] WARN: Disk usage at 98%",
+            "[10:23:42] ERROR: No space left on device",
+            "[10:23:43] ERROR: Cannot write WAL log: disk full",
+            "[10:23:44] ERROR: FATAL: could not write to file: No space left on device",
+            "[10:23:45] ERROR: Rejecting all write operations",
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 30.0, "memory_usage": 50.0, "error_rate": 45.0, "latency_p99": 200},
+        "user-service": {"cpu_usage": 25.0, "memory_usage": 48.0, "error_rate": 100.0, "latency_p99": 100},
+        "database": {"cpu_usage": 15.0, "memory_usage": 40.0, "connections_active": 50, "threads_active": 10},
+    },
+    "ground_truth": {
+        "root_cause": "disk_full",
+        "severity": "critical",
+        "affected_services": ["database", "user-service", "api-gateway"],
+        "recommended_action": "clear_disk_space",
+    },
+}
+
+SCENARIO_CONFIG_ERROR = {
+    "id": "configuration_error",
+    "name": "Invalid Configuration After Deployment",
+    "difficulty": "easy",
+    "alert": {
+        "title": "notification-service failing to start (restart loop)",
+        "severity": "high"
+    },
+    "services": ["notification-service", "api-gateway", "config-server"],
+    "logs": {
+        "notification-service": [
+            "[10:23:45] INFO: Starting notification-service v2.3.1",
+            "[10:23:45] INFO: Loading configuration from config-server",
+            "[10:23:46] ERROR: Configuration validation failed",
+            "[10:23:46] ERROR: Missing required field: 'smtp.host'",
+            "[10:23:47] FATAL: Cannot start service with invalid configuration",
+            "[10:23:48] INFO: Service shutting down",
+            "[10:23:50] INFO: Starting notification-service v2.3.1 (restart attempt 2)",
+        ],
+        "api-gateway": [
+            "[10:23:45] INFO: Health check for notification-service",
+            "[10:23:46] WARN: notification-service health check failed",
+            "[10:23:50] WARN: notification-service not responding",
+        ],
+        "config-server": [
+            "[10:23:40] INFO: Serving configuration for notification-service",
+            "[10:23:41] INFO: Configuration version: 2.3.1-bad",
+            "[10:23:42] WARN: Configuration missing optional field 'smtp.port', using default",
+        ],
+    },
+    "metrics": {
+        "notification-service": {"cpu_usage": 5.0, "memory_usage": 10.0, "error_rate": 100.0, "latency_p99": 0},
+        "api-gateway": {"cpu_usage": 30.0, "memory_usage": 50.0, "error_rate": 5.0, "latency_p99": 100},
+        "config-server": {"cpu_usage": 10.0, "memory_usage": 35.0, "error_rate": 0.0, "latency_p99": 50},
+    },
+    "ground_truth": {
+        "root_cause": "configuration_error",
+        "severity": "high",
+        "affected_services": ["notification-service", "config-server"],
+        "recommended_action": "update_configuration",
     },
 }
 
@@ -132,6 +260,156 @@ SCENARIO_REDIS_CASCADE = {
         "recommended_action": "increase_memory_limit",
     },
 }
+
+SCENARIO_MEMORY_LEAK = {
+    "id": "memory_leak",
+    "name": "Gradual Memory Leak Causing OOM",
+    "difficulty": "medium",
+    "alert": {
+        "title": "search-service killed by OOM killer",
+        "severity": "high"
+    },
+    "services": ["search-service", "api-gateway", "elasticsearch", "cache-service"],
+    "logs": {
+        "search-service": [
+            "[10:20:00] INFO: Processing search query 'laptop'",
+            "[10:20:15] INFO: Processing search query 'phone'",
+            "[10:21:00] WARN: GC pause time increasing: 500ms",
+            "[10:22:00] WARN: Memory usage at 85%",
+            "[10:22:30] WARN: GC pause time: 2000ms",
+            "[10:23:00] ERROR: OutOfMemoryError: Java heap space",
+            "[10:23:01] FATAL: Process killed by OOM killer",
+        ],
+        "api-gateway": [
+            "[10:23:01] ERROR: Connection refused to search-service",
+            "[10:23:02] ERROR: search-service unavailable",
+            "[10:23:05] INFO: search-service back online (restarted)",
+        ],
+        "elasticsearch": [
+            "[10:20:00] INFO: Query received from search-service",
+            "[10:21:00] INFO: Query response time: 45ms",
+            "[10:22:00] INFO: Cluster health: green",  # RED HERRING - ES is fine
+        ],
+        "cache-service": [
+            "[10:20:00] INFO: Cache hit ratio: 85%",
+            "[10:21:00] INFO: Cache hit ratio: 60%",  # Decreasing due to memory pressure
+            "[10:22:00] WARN: Cache evictions increasing",
+        ],
+    },
+    "metrics": {
+        "search-service": {"cpu_usage": 90.0, "memory_usage": 99.0, "error_rate": 100.0, "latency_p99": 5000},
+        "api-gateway": {"cpu_usage": 35.0, "memory_usage": 50.0, "error_rate": 25.0, "latency_p99": 3000},
+        "elasticsearch": {"cpu_usage": 40.0, "memory_usage": 60.0, "error_rate": 0.0, "latency_p99": 50},
+        "cache-service": {"cpu_usage": 20.0, "memory_usage": 70.0, "error_rate": 0.0, "latency_p99": 10},
+    },
+    "ground_truth": {
+        "root_cause": "memory_leak",
+        "severity": "high",
+        "affected_services": ["search-service", "api-gateway"],
+        "recommended_action": "restart_service",
+    },
+}
+
+SCENARIO_DNS_FAILURE = {
+    "id": "dns_resolution_failure",
+    "name": "DNS Resolution Failure After Network Change",
+    "difficulty": "medium",
+    "alert": {
+        "title": "Intermittent connection failures across multiple services",
+        "severity": "high"
+    },
+    "services": ["api-gateway", "user-service", "order-service", "dns-server", "network-monitor"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Routing request to user-service",
+            "[10:23:46] ERROR: Could not resolve host: user-service.internal",
+            "[10:23:47] INFO: Routing request to order-service",
+            "[10:23:47] ERROR: Could not resolve host: order-service.internal",
+            "[10:23:48] INFO: Retry successful for user-service",
+        ],
+        "user-service": [
+            "[10:23:45] INFO: Service healthy",
+            "[10:23:46] INFO: Processed request successfully",
+        ],
+        "order-service": [
+            "[10:23:45] INFO: Service healthy",
+            "[10:23:46] ERROR: Failed to connect to payment-service: DNS lookup failed",
+        ],
+        "dns-server": [
+            "[10:23:00] WARN: High query latency detected",
+            "[10:23:30] ERROR: Upstream DNS timeout",
+            "[10:23:45] ERROR: Failed to resolve: user-service.internal",
+            "[10:23:46] WARN: DNS cache cleared unexpectedly",
+        ],
+        "network-monitor": [
+            "[10:23:00] INFO: Network configuration changed",  # ROOT CAUSE HINT
+            "[10:23:01] INFO: New DNS server: 10.0.0.53",
+            "[10:23:30] WARN: Packet loss detected: 5%",  # RED HERRING
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 40.0, "memory_usage": 55.0, "error_rate": 30.0, "latency_p99": 2000},
+        "user-service": {"cpu_usage": 25.0, "memory_usage": 45.0, "error_rate": 0.0, "latency_p99": 100},
+        "order-service": {"cpu_usage": 30.0, "memory_usage": 50.0, "error_rate": 20.0, "latency_p99": 1500},
+        "dns-server": {"cpu_usage": 80.0, "memory_usage": 40.0, "error_rate": 25.0, "latency_p99": 500},
+        "network-monitor": {"cpu_usage": 10.0, "memory_usage": 20.0, "error_rate": 0.0, "latency_p99": 10},
+    },
+    "ground_truth": {
+        "root_cause": "dns_resolution_failure",
+        "severity": "high",
+        "affected_services": ["dns-server", "api-gateway", "order-service"],
+        "recommended_action": "fix_dns_config",
+    },
+}
+
+SCENARIO_SLOW_QUERY = {
+    "id": "database_slow_query",
+    "name": "Unoptimized Query Causing Timeouts",
+    "difficulty": "medium",
+    "alert": {
+        "title": "High latency on reports-service (p99: 45000ms)",
+        "severity": "high"
+    },
+    "services": ["reports-service", "api-gateway", "database", "cache-service"],
+    "logs": {
+        "reports-service": [
+            "[10:23:45] INFO: Generating monthly sales report",
+            "[10:23:46] INFO: Executing query: SELECT * FROM orders JOIN...",
+            "[10:24:30] WARN: Query still running after 45s",
+            "[10:25:00] ERROR: Query timeout after 60s",
+            "[10:25:01] INFO: Retrying with same query...",
+        ],
+        "api-gateway": [
+            "[10:23:45] INFO: Request to /reports/monthly",
+            "[10:24:45] WARN: Upstream timeout from reports-service",
+            "[10:25:00] ERROR: 504 Gateway Timeout",
+        ],
+        "database": [
+            "[10:23:46] INFO: Executing query from reports-service",
+            "[10:23:47] WARN: Full table scan detected on 'orders' table",
+            "[10:23:48] WARN: Query using 80% of available memory",
+            "[10:24:00] WARN: Slow query log: 15000ms and counting",
+            "[10:24:30] ERROR: Query consuming excessive resources",
+        ],
+        "cache-service": [
+            "[10:23:45] INFO: Cache miss for report:monthly:2024",  # Report not cached
+            "[10:23:46] INFO: Cache hit ratio: 95%",  # RED HERRING - cache is fine
+        ],
+    },
+    "metrics": {
+        "reports-service": {"cpu_usage": 30.0, "memory_usage": 60.0, "error_rate": 80.0, "latency_p99": 45000},
+        "api-gateway": {"cpu_usage": 35.0, "memory_usage": 50.0, "error_rate": 15.0, "latency_p99": 45000},
+        "database": {"cpu_usage": 95.0, "memory_usage": 85.0, "connections_active": 50, "threads_active": 48},
+        "cache-service": {"cpu_usage": 15.0, "memory_usage": 40.0, "error_rate": 0.0, "latency_p99": 5},
+    },
+    "ground_truth": {
+        "root_cause": "database_slow_query",
+        "severity": "high",
+        "affected_services": ["database", "reports-service", "api-gateway"],
+        "recommended_action": "optimize_slow_queries",
+    },
+}
+
 
 # ============================================================
 # HARD SCENARIO
@@ -196,13 +474,196 @@ SCENARIO_INTERMITTENT_THREAD_POOL = {
     },
 }
 
+SCENARIO_CONNECTION_LEAK = {
+    "id": "connection_pool_leak",
+    "name": "Connection Pool Leak Under Load",
+    "difficulty": "hard",
+    "alert": {
+        "title": "Gradual increase in database connection errors",
+        "severity": "medium"
+    },
+    "services": ["api-gateway", "order-service", "inventory-service", "database", "monitoring"],
+    "logs": {
+        "api-gateway": [
+            "[10:00:00] INFO: Request processed successfully",
+            "[10:30:00] INFO: Request processed successfully",
+            "[11:00:00] WARN: Slight increase in latency detected",
+            "[11:30:00] ERROR: Timeout waiting for order-service",
+        ],
+        "order-service": [
+            "[10:00:00] INFO: Database connection acquired",
+            "[10:00:01] INFO: Order created successfully",
+            # Note: No "connection released" log - THIS IS THE BUG
+            "[10:30:00] INFO: Database connection acquired",
+            "[10:30:01] INFO: Order created successfully",
+            "[11:00:00] WARN: Connection pool usage: 80%",
+            "[11:30:00] ERROR: Cannot acquire connection: pool exhausted",
+            "[11:30:01] INFO: Connection pool size: 50/50 active",
+        ],
+        "inventory-service": [
+            "[11:00:00] INFO: Database query completed",
+            "[11:00:00] INFO: Connection released back to pool",  # This service releases properly
+            "[11:30:00] INFO: Operating normally",
+        ],
+        "database": [
+            "[10:00:00] INFO: Active connections: 10",
+            "[10:30:00] INFO: Active connections: 25",
+            "[11:00:00] WARN: Active connections: 45",
+            "[11:30:00] ERROR: Active connections: 50 (max)",
+            "[11:30:01] INFO: All connections from order-service IP",
+        ],
+        "monitoring": [
+            "[11:00:00] INFO: Memory usage stable",  # RED HERRING
+            "[11:00:00] INFO: CPU usage normal",  # RED HERRING
+            "[11:30:00] WARN: Connection count trending up over 2 hours",
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 40.0, "memory_usage": 55.0, "error_rate": 20.0, "latency_p99": 5000},
+        "order-service": {"cpu_usage": 35.0, "memory_usage": 50.0, "error_rate": 50.0, "connections_active": 50},
+        "inventory-service": {"cpu_usage": 25.0, "memory_usage": 45.0, "error_rate": 0.0, "connections_active": 5},
+        "database": {"cpu_usage": 30.0, "memory_usage": 40.0, "connections_active": 50, "threads_active": 50},
+        "monitoring": {"cpu_usage": 5.0, "memory_usage": 20.0, "error_rate": 0.0, "latency_p99": 10},
+    },
+    "ground_truth": {
+        "root_cause": "database_connection_timeout",
+        "severity": "high",
+        "affected_services": ["order-service", "database", "api-gateway"],
+        "recommended_action": "restart_service",
+    },
+}
+
+SCENARIO_RETRY_STORM = {
+    "id": "retry_storm",
+    "name": "Retry Storm Amplifying Small Failure",
+    "difficulty": "hard",
+    "alert": {
+        "title": "Sudden 10x spike in traffic to payment-service",
+        "severity": "critical"
+    },
+    "services": ["api-gateway", "checkout-service", "payment-service", "order-service", "queue-worker"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Traffic rate: 1000 req/s (normal)",
+            "[10:23:50] WARN: Traffic rate: 5000 req/s (elevated)",
+            "[10:23:55] ERROR: Traffic rate: 10000 req/s (critical)",
+            "[10:24:00] ERROR: Rate limiting activated",
+        ],
+        "checkout-service": [
+            "[10:23:45] INFO: Processing checkout",
+            "[10:23:46] WARN: payment-service returned 503, retrying...",
+            "[10:23:47] WARN: Retry attempt 2 of 5",
+            "[10:23:48] WARN: Retry attempt 3 of 5",
+            "[10:23:49] WARN: Retry attempt 4 of 5",
+            "[10:23:50] ERROR: All retries failed",
+        ],
+        "payment-service": [
+            "[10:23:44] WARN: External payment gateway slow (2000ms)",  # Initial small issue
+            "[10:23:45] ERROR: Request queue full, rejecting requests",
+            "[10:23:46] ERROR: 503 Service Unavailable",
+            "[10:23:50] ERROR: Overwhelmed by retry requests",
+            "[10:23:55] FATAL: Service crashed due to memory pressure",
+        ],
+        "order-service": [
+            "[10:23:45] INFO: Creating order, waiting for payment",
+            "[10:23:50] WARN: Payment timeout, will retry",
+            "[10:23:55] WARN: Also retrying payment...",  # Adding to the storm
+        ],
+        "queue-worker": [
+            "[10:23:45] INFO: Processing background jobs normally",
+            "[10:23:46] INFO: Job queue size: 100",  # RED HERRING
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 90.0, "memory_usage": 80.0, "error_rate": 60.0, "latency_p99": 10000},
+        "checkout-service": {"cpu_usage": 85.0, "memory_usage": 75.0, "error_rate": 90.0, "latency_p99": 30000},
+        "payment-service": {"cpu_usage": 100.0, "memory_usage": 95.0, "error_rate": 99.0, "latency_p99": 30000},
+        "order-service": {"cpu_usage": 70.0, "memory_usage": 65.0, "error_rate": 80.0, "latency_p99": 25000},
+        "queue-worker": {"cpu_usage": 20.0, "memory_usage": 40.0, "error_rate": 0.0, "latency_p99": 100},
+    },
+    "ground_truth": {
+        "root_cause": "network_timeout",
+        "severity": "critical",
+        "affected_services": ["payment-service", "checkout-service", "order-service", "api-gateway"],
+        "recommended_action": "enable_circuit_breaker",
+    },
+}
+
+SCENARIO_CLOCK_SKEW = {
+    "id": "clock_skew",
+    "name": "Clock Skew Causing Auth Failures",
+    "difficulty": "hard",
+    "alert": {
+        "title": "Intermittent authentication failures (30% error rate)",
+        "severity": "high"
+    },
+    "services": ["api-gateway", "auth-service", "user-service", "token-validator", "ntp-server"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Request with JWT token received",
+            "[10:23:45] INFO: Forwarding to auth-service for validation",
+            "[10:23:46] ERROR: Auth failed: token not yet valid",
+            "[10:23:47] INFO: Different request succeeded",
+            "[10:23:48] ERROR: Auth failed: token expired",  # Same token!
+        ],
+        "auth-service": [
+            "[10:23:45] INFO: Validating JWT token",
+            "[10:23:45] INFO: Token issued at: 10:23:40",
+            "[10:23:45] INFO: Current server time: 10:23:45",
+            "[10:23:46] INFO: Token validation successful",
+        ],
+        "user-service": [
+            "[10:23:45] INFO: Operating normally",
+            "[10:23:46] INFO: User lookup completed",
+        ],
+        "token-validator": [
+            "[10:23:45] INFO: Validating token timestamp",
+            "[10:23:45] ERROR: Token nbf (not before) is in the future",
+            "[10:23:45] INFO: Server time: 10:23:35",  # THIS SERVER IS 10 SECONDS BEHIND!
+            "[10:23:46] ERROR: Clock skew detected: -10 seconds",
+        ],
+        "ntp-server": [
+            "[10:20:00] WARN: NTP sync failed for token-validator",
+            "[10:21:00] WARN: token-validator clock drifting",
+            "[10:23:00] ERROR: token-validator 10 seconds behind",
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 40.0, "memory_usage": 55.0, "error_rate": 30.0, "latency_p99": 500},
+        "auth-service": {"cpu_usage": 35.0, "memory_usage": 50.0, "error_rate": 0.0, "latency_p99": 100},
+        "user-service": {"cpu_usage": 25.0, "memory_usage": 45.0, "error_rate": 0.0, "latency_p99": 80},
+        "token-validator": {"cpu_usage": 30.0, "memory_usage": 40.0, "error_rate": 30.0, "latency_p99": 50},
+        "ntp-server": {"cpu_usage": 5.0, "memory_usage": 15.0, "error_rate": 10.0, "latency_p99": 5},
+    },
+    "ground_truth": {
+        "root_cause": "configuration_error",
+        "severity": "high",
+        "affected_services": ["token-validator", "api-gateway", "ntp-server"],
+        "recommended_action": "fix_dns_config",
+    },
+}
+
 # ============================================================
 # ALL SCENARIOS
 # ============================================================
 ALL_SCENARIOS = [
+    # Easy (4)
     SCENARIO_DATABASE_OVERLOAD,
+    SCENARIO_SSL_EXPIRED,
+    SCENARIO_DISK_FULL,
+    SCENARIO_CONFIG_ERROR,
+    
+    # Medium (4)
     SCENARIO_REDIS_CASCADE,
+    SCENARIO_MEMORY_LEAK,
+    SCENARIO_DNS_FAILURE,
+    SCENARIO_SLOW_QUERY,
+    
+    # Hard (4)
     SCENARIO_INTERMITTENT_THREAD_POOL,
+    SCENARIO_CONNECTION_LEAK,
+    SCENARIO_RETRY_STORM,
+    SCENARIO_CLOCK_SKEW,
 ]
 
 SCENARIOS_BY_DIFFICULTY = {
