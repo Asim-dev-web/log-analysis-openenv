@@ -80,4 +80,4 @@ Local Development:
 
 Docker:
     docker build -t log-analysis-env:latest -f server/Dockerfile .
-    docker run -p 8000:8000 log-analysis-env:latest
+    docker run -p 8000:8000 log-analysis-env:latest.
