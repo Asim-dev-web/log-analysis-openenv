@@ -1,6 +1,7 @@
 from uuid import uuid4
 from typing import Dict, List, Any
 import random
+import traceback
 
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
@@ -8,6 +9,9 @@ from openenv.core.env_server.types import State
 try:
     from ..models import LogAnalysisAction, LogAnalysisObservation
 except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
     from models import LogAnalysisAction, LogAnalysisObservation
 
 try:
@@ -33,66 +37,81 @@ class LogAnalysisEnvironment(Environment):
 
     def reset(self) -> LogAnalysisObservation:
         """Start a new investigation episode."""
-        # Reset state
-        self._state = State(episode_id=str(uuid4()), step_count=0)
-        self._fetched_logs = {}
-        self._fetched_metrics = {}
-        self._is_done = False
-        self._last_reward = 0.0
-        self._diagnosis_submitted = False
-        
-        # Pick a random scenario
-        self._current_scenario = random.choice(ALL_SCENARIOS)
-        
-        # Return initial observation
-        return LogAnalysisObservation(
-            alert_title=self._current_scenario["alert"]["title"],
-            alert_severity=self._current_scenario["alert"]["severity"],
-            available_services=self._current_scenario["services"],
-            fetched_logs={},
-            fetched_metrics={},
-            steps_taken=0,
-            max_steps=self.MAX_STEPS,
-            available_root_causes=ALL_ROOT_CAUSES,
-            available_severities=["critical", "high", "medium", "low"],
-            available_actions=ALL_RECOMMENDED_ACTIONS,
-            is_done=False,
-            message="Investigation started. Analyze the alert and fetch logs/metrics to diagnose the issue.",
-            done=False,
-            reward=0.0,
-        )
+        try:
+            # Reset state
+            self._state = State(episode_id=str(uuid4()), step_count=0)
+            self._fetched_logs = {}
+            self._fetched_metrics = {}
+            self._is_done = False
+            self._last_reward = 0.0
+            self._diagnosis_submitted = False
+            
+            # Pick a random scenario
+            self._current_scenario = random.choice(ALL_SCENARIOS)
+            
+            # Return initial observation
+            return LogAnalysisObservation(
+                alert_title=self._current_scenario["alert"]["title"],
+                alert_severity=self._current_scenario["alert"]["severity"],
+                available_services=self._current_scenario["services"],
+                fetched_logs={},
+                fetched_metrics={},
+                steps_taken=0,
+                max_steps=self.MAX_STEPS,
+                available_root_causes=ALL_ROOT_CAUSES,
+                available_severities=["critical", "high", "medium", "low"],
+                available_actions=ALL_RECOMMENDED_ACTIONS,
+                is_done=False,
+                message="Investigation started. Analyze the alert and fetch logs/metrics to diagnose the issue.",
+                done=False,
+                reward=0.0,
+            )
+        except Exception as e:
+            print(f"ERROR in reset(): {e}")
+            traceback.print_exc()
+            raise e
 
     def step(self, action: LogAnalysisAction) -> LogAnalysisObservation:
         """Process agent's action and return new observation."""
-        self._state.step_count += 1
-        reward = 0.0
-        message = ""
-        
-        # Check if already done
-        if self._is_done:
-            return self._make_observation("Episode already ended.", reward)
-        
-        # Handle different action types
-        if action.action_type == "fetch_logs":
-            reward, message = self._handle_fetch_logs(action)
+        try:
+            print(f"DEBUG step() called with action: {action}")
+            print(f"DEBUG action type: {type(action)}")
+            print(f"DEBUG action.action_type: {action.action_type}")
             
-        elif action.action_type == "fetch_metrics":
-            reward, message = self._handle_fetch_metrics(action)
+            self._state.step_count += 1
+            reward = 0.0
+            message = ""
             
-        elif action.action_type == "submit_diagnosis":
-            reward, message = self._handle_submit_diagnosis(action)
+            # Check if already done
+            if self._is_done:
+                return self._make_observation("Episode already ended.", reward)
             
-        else:
-            message = f"Invalid action_type: {action.action_type}"
-            reward = -0.1
-        
-        # Check if max steps reached
-        if self._state.step_count >= self.MAX_STEPS and not self._is_done:
-            self._is_done = True
-            message += " Max steps reached. Episode ended."
-        
-        self._last_reward = reward
-        return self._make_observation(message, reward)
+            # Handle different action types
+            if action.action_type == "fetch_logs":
+                reward, message = self._handle_fetch_logs(action)
+                
+            elif action.action_type == "fetch_metrics":
+                reward, message = self._handle_fetch_metrics(action)
+                
+            elif action.action_type == "submit_diagnosis":
+                reward, message = self._handle_submit_diagnosis(action)
+                
+            else:
+                message = f"Invalid action_type: {action.action_type}"
+                reward = -0.1
+            
+            # Check if max steps reached
+            if self._state.step_count >= self.MAX_STEPS and not self._is_done:
+                self._is_done = True
+                message += " Max steps reached. Episode ended."
+            
+            self._last_reward = reward
+            return self._make_observation(message, reward)
+            
+        except Exception as e:
+            print(f"ERROR in step(): {e}")
+            traceback.print_exc()
+            raise e
 
     def _handle_fetch_logs(self, action: LogAnalysisAction) -> tuple:
         """Handle fetch_logs action."""
