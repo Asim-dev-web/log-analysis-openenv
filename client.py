@@ -1,5 +1,3 @@
-"""Log Analysis Environment Client."""
-
 from typing import Dict
 
 from openenv.core import EnvClient
@@ -15,23 +13,7 @@ except ImportError:
 class LogAnalysisClient(
     EnvClient[LogAnalysisAction, LogAnalysisObservation, State]
 ):
-    """
-    Client for the Log Analysis Environment.
-
-    Example:
-        >>> with LogAnalysisClient(base_url="http://localhost:8000") as client:
-        ...     result = client.reset()
-        ...     print(result.observation.alert_title)
-        ...
-        ...     result = client.step(LogAnalysisAction(
-        ...         action_type="fetch_logs",
-        ...         service="api-gateway"
-        ...     ))
-        ...     print(result.observation.fetched_logs)
-    """
-
     def _step_payload(self, action: LogAnalysisAction) -> Dict:
-        """Convert LogAnalysisAction to JSON payload."""
         return {
             "action_type": action.action_type,
             "service": action.service,
@@ -43,7 +25,6 @@ class LogAnalysisClient(
         }
 
     def _parse_result(self, payload: Dict) -> StepResult[LogAnalysisObservation]:
-        """Parse server response into StepResult."""
         obs_data = payload.get("observation", {})
         observation = LogAnalysisObservation(
             alert_title=obs_data.get("alert_title", ""),
@@ -58,8 +39,6 @@ class LogAnalysisClient(
             available_actions=obs_data.get("available_actions", []),
             is_done=obs_data.get("is_done", False),
             message=obs_data.get("message", ""),
-            done=payload.get("done", False),
-            reward=payload.get("reward", 0.0),
         )
 
         return StepResult(
@@ -69,7 +48,6 @@ class LogAnalysisClient(
         )
 
     def _parse_state(self, payload: Dict) -> State:
-        """Parse server response into State object."""
         return State(
             episode_id=payload.get("episode_id"),
             step_count=payload.get("step_count", 0),

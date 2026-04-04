@@ -243,8 +243,8 @@ SCENARIO_REDIS_CASCADE = {
             "[10:23:42] ERROR: OOM command not allowed when used memory > maxmemory",
         ],
         "payment-service": [
-            "[10:23:45] INFO: Payment processed successfully",  # RED HERRING
-            "[10:23:46] WARN: SSL certificate expiring in 7 days",  # RED HERRING
+            "[10:23:45] INFO: Payment processed successfully",  
+            "[10:23:46] WARN: SSL certificate expiring in 7 days",  
         ],
     },
     "metrics": {
@@ -288,11 +288,11 @@ SCENARIO_MEMORY_LEAK = {
         "elasticsearch": [
             "[10:20:00] INFO: Query received from search-service",
             "[10:21:00] INFO: Query response time: 45ms",
-            "[10:22:00] INFO: Cluster health: green",  # RED HERRING - ES is fine
+            "[10:22:00] INFO: Cluster health: green",  
         ],
         "cache-service": [
             "[10:20:00] INFO: Cache hit ratio: 85%",
-            "[10:21:00] INFO: Cache hit ratio: 60%",  # Decreasing due to memory pressure
+            "[10:21:00] INFO: Cache hit ratio: 60%", 
             "[10:22:00] WARN: Cache evictions increasing",
         ],
     },
@@ -342,9 +342,9 @@ SCENARIO_DNS_FAILURE = {
             "[10:23:46] WARN: DNS cache cleared unexpectedly",
         ],
         "network-monitor": [
-            "[10:23:00] INFO: Network configuration changed",  # ROOT CAUSE HINT
+            "[10:23:00] INFO: Network configuration changed", 
             "[10:23:01] INFO: New DNS server: 10.0.0.53",
-            "[10:23:30] WARN: Packet loss detected: 5%",  # RED HERRING
+            "[10:23:30] WARN: Packet loss detected: 5%", 
         ],
     },
     "metrics": {
@@ -392,8 +392,8 @@ SCENARIO_SLOW_QUERY = {
             "[10:24:30] ERROR: Query consuming excessive resources",
         ],
         "cache-service": [
-            "[10:23:45] INFO: Cache miss for report:monthly:2024",  # Report not cached
-            "[10:23:46] INFO: Cache hit ratio: 95%",  # RED HERRING - cache is fine
+            "[10:23:45] INFO: Cache miss for report:monthly:2024", 
+            "[10:23:46] INFO: Cache hit ratio: 95%", 
         ],
     },
     "metrics": {
@@ -441,9 +441,9 @@ SCENARIO_INTERMITTENT_THREAD_POOL = {
             "[10:23:50] INFO: Request processed (38ms)",
         ],
         "user-service-3": [
-            "[10:23:45] INFO: Health check passed",  # PASSES HEALTH CHECK!
+            "[10:23:45] INFO: Health check passed",  
             "[10:23:47] ERROR: Thread pool exhausted, rejecting request",
-            "[10:23:48] INFO: Health check passed",  # STILL PASSES!
+            "[10:23:48] INFO: Health check passed", 
             "[10:23:50] ERROR: Thread pool exhausted, rejecting request",
             "[10:23:55] INFO: Thread pool recovered (12/100 active)",
         ],
@@ -455,7 +455,7 @@ SCENARIO_INTERMITTENT_THREAD_POOL = {
         ],
         "load-balancer": [
             "[10:23:00] INFO: Health check config: endpoint=/health, interval=30s",
-            "[10:23:30] INFO: All backends healthy",  # MISLEADING
+            "[10:23:30] INFO: All backends healthy",  
         ],
     },
     "metrics": {
@@ -493,7 +493,6 @@ SCENARIO_CONNECTION_LEAK = {
         "order-service": [
             "[10:00:00] INFO: Database connection acquired",
             "[10:00:01] INFO: Order created successfully",
-            # Note: No "connection released" log - THIS IS THE BUG
             "[10:30:00] INFO: Database connection acquired",
             "[10:30:01] INFO: Order created successfully",
             "[11:00:00] WARN: Connection pool usage: 80%",
@@ -502,7 +501,7 @@ SCENARIO_CONNECTION_LEAK = {
         ],
         "inventory-service": [
             "[11:00:00] INFO: Database query completed",
-            "[11:00:00] INFO: Connection released back to pool",  # This service releases properly
+            "[11:00:00] INFO: Connection released back to pool",  
             "[11:30:00] INFO: Operating normally",
         ],
         "database": [
@@ -513,8 +512,8 @@ SCENARIO_CONNECTION_LEAK = {
             "[11:30:01] INFO: All connections from order-service IP",
         ],
         "monitoring": [
-            "[11:00:00] INFO: Memory usage stable",  # RED HERRING
-            "[11:00:00] INFO: CPU usage normal",  # RED HERRING
+            "[11:00:00] INFO: Memory usage stable",  
+            "[11:00:00] INFO: CPU usage normal",  
             "[11:30:00] WARN: Connection count trending up over 2 hours",
         ],
     },
@@ -558,7 +557,7 @@ SCENARIO_RETRY_STORM = {
             "[10:23:50] ERROR: All retries failed",
         ],
         "payment-service": [
-            "[10:23:44] WARN: External payment gateway slow (2000ms)",  # Initial small issue
+            "[10:23:44] WARN: External payment gateway slow (2000ms)",  
             "[10:23:45] ERROR: Request queue full, rejecting requests",
             "[10:23:46] ERROR: 503 Service Unavailable",
             "[10:23:50] ERROR: Overwhelmed by retry requests",
@@ -567,11 +566,11 @@ SCENARIO_RETRY_STORM = {
         "order-service": [
             "[10:23:45] INFO: Creating order, waiting for payment",
             "[10:23:50] WARN: Payment timeout, will retry",
-            "[10:23:55] WARN: Also retrying payment...",  # Adding to the storm
+            "[10:23:55] WARN: Also retrying payment...",
         ],
         "queue-worker": [
             "[10:23:45] INFO: Processing background jobs normally",
-            "[10:23:46] INFO: Job queue size: 100",  # RED HERRING
+            "[10:23:46] INFO: Job queue size: 100",  
         ],
     },
     "metrics": {
@@ -604,7 +603,7 @@ SCENARIO_CLOCK_SKEW = {
             "[10:23:45] INFO: Forwarding to auth-service for validation",
             "[10:23:46] ERROR: Auth failed: token not yet valid",
             "[10:23:47] INFO: Different request succeeded",
-            "[10:23:48] ERROR: Auth failed: token expired",  # Same token!
+            "[10:23:48] ERROR: Auth failed: token expired",  
         ],
         "auth-service": [
             "[10:23:45] INFO: Validating JWT token",
@@ -619,7 +618,7 @@ SCENARIO_CLOCK_SKEW = {
         "token-validator": [
             "[10:23:45] INFO: Validating token timestamp",
             "[10:23:45] ERROR: Token nbf (not before) is in the future",
-            "[10:23:45] INFO: Server time: 10:23:35",  # THIS SERVER IS 10 SECONDS BEHIND!
+            "[10:23:45] INFO: Server time: 10:23:35",  
             "[10:23:46] ERROR: Clock skew detected: -10 seconds",
         ],
         "ntp-server": [
@@ -643,9 +642,7 @@ SCENARIO_CLOCK_SKEW = {
     },
 }
 
-# ============================================================
-# ALL SCENARIOS
-# ============================================================
+
 ALL_SCENARIOS = [
     # Easy (4)
     SCENARIO_DATABASE_OVERLOAD,

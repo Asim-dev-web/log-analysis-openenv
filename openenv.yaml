@@ -1,55 +1,12 @@
 spec_version: 1
 name: log_analysis
-type: space
-runtime: fastapi
+version: "1.0.0"
+type: custom
+runtime: docker
 app: server.app:app
 port: 8000
-
-# Environment metadata
 description: |
   Log Analysis Environment for incident investigation.
-  
-  The agent investigates system incidents by fetching logs and metrics
-  from various services, then submitting a diagnosis with root cause,
-  severity, affected services, and recommended action.
-
-# Task definitions
-tasks:
-  - id: easy
-    name: "Easy - Single Service Failure"
-    description: "Direct failure with obvious error messages. Single causal chain."
-    difficulty: easy
-    expected_score: 0.8
-    
-  - id: medium
-    name: "Medium - Cascading Failure"
-    description: "Multiple services affected, red herrings present, requires tracing."
-    difficulty: medium
-    expected_score: 0.6
-    
-  - id: hard
-    name: "Hard - Intermittent Failure"
-    description: "Non-obvious root cause, misleading health checks, requires deep analysis."
-    difficulty: hard
-    expected_score: 0.4
-
-# Action space
-action_space:
-  type: object
-  description: |
-    Agent can perform three types of actions:
-    1. fetch_logs - Get logs from a service
-    2. fetch_metrics - Get metrics from a service
-    3. submit_diagnosis - Submit final diagnosis
-
-# Observation space
-observation_space:
-  type: object
-  description: |
-    Agent observes:
-    - Alert information (title, severity)
-    - Available services to investigate
-    - Fetched logs and metrics
-    - Valid options for diagnosis (root causes, severities, actions)
-    - Step count and limits
-
+  Agent investigates system incidents by fetching logs and metrics,
+  then submits diagnosis with root cause, severity, affected services,
+  and recommended action. Three difficulty levels: easy, medium, hard.

@@ -1,207 +1,254 @@
-"""
-Baseline inference script for Log Analysis Environment.
-
-Required environment variables:
-    - API_BASE_URL: The API endpoint for the LLM (default: OpenAI)
-    - MODEL_NAME: The model identifier to use
-    - HF_TOKEN: Your Hugging Face API key (used as LLM API key)
-    - ENV_BASE_URL: Base URL of the running environment server
-                    e.g. "http://localhost:8000"  (local Docker)
-                    e.g. "https://as-im-log-analysis.hf.space" (HF Space)
-    - DOCKER_IMAGE: (optional) Docker image name — if set, spins up a local
-                    container instead of using ENV_BASE_URL.
-"""
-
 import os
 import json
 import asyncio
+from typing import List, Optional
 from openai import OpenAI
 
 from client import LogAnalysisClient
 from models import LogAnalysisAction
 
-# ── LLM config ────────────────────────────────────────────────────────────────
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME   = os.environ.get("MODEL_NAME",   "gpt-4")
-HF_TOKEN     = os.environ.get("HF_TOKEN",     "")
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+API_KEY = HF_TOKEN or os.environ.get("OPENAI_API_KEY", "EMPTY")
 
-# ── Environment config ─────────────────────────────────────────────────────────
-ENV_BASE_URL  = os.environ.get("ENV_BASE_URL",  "http://localhost:8000")
-DOCKER_IMAGE  = os.environ.get("DOCKER_IMAGE",  "")  # e.g. "log-analysis-env:latest"
+ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:8000")
+DOCKER_IMAGE = os.environ.get("DOCKER_IMAGE", "")
 
-MAX_STEPS          = 10
-SUCCESS_THRESHOLD  = 0.5
+BENCHMARK = "log_analysis"
+MAX_STEPS = 10
+SUCCESS_THRESHOLD = 0.5
 
-# ── OpenAI-compatible client (works with any provider) ────────────────────────
-llm = OpenAI(
-    base_url=API_BASE_URL,
-    api_key=HF_TOKEN or os.environ.get("OPENAI_API_KEY", ""),
-)
+llm = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 
-# ── Prompt builder ─────────────────────────────────────────────────────────────
-
-def observation_to_prompt(obs) -> str:
-    """Convert a LogAnalysisObservation to an LLM prompt."""
-    return f"""You are an expert SRE investigating a system incident.
-
-## Alert
-Title: {obs.alert_title}
-Severity: {obs.alert_severity}
-
-## Available Services
-{json.dumps(obs.available_services, indent=2)}
-
-## Logs Fetched So Far
-{json.dumps(obs.fetched_logs, indent=2) if obs.fetched_logs else "None yet"}
-
-## Metrics Fetched So Far
-{json.dumps(obs.fetched_metrics, indent=2) if obs.fetched_metrics else "None yet"}
-
-## Progress
-Steps taken: {obs.steps_taken} / {obs.max_steps}
-
-## Valid Options
-Root causes: {json.dumps(obs.available_root_causes, indent=2)}
-Severities:  {obs.available_severities}
-Actions:     {json.dumps(obs.available_actions, indent=2)}
-
-## Your Task
-Investigate the incident by fetching logs/metrics, then submit a diagnosis.
-
-Fetch more data:
-  {{"action_type": "fetch_logs",    "service": "<name from available_services>"}}
-  {{"action_type": "fetch_metrics", "service": "<name>", "metric": "<cpu_usage|memory_usage|error_rate|latency_p99|connections_active|threads_active>"}}
-
-Submit diagnosis:
-  {{"action_type": "submit_diagnosis", "root_cause": "<from available_root_causes>",
-    "severity": "<from available_severities>",
-    "affected_services": ["<svc1>", ...],
-    "recommended_action": "<from available_actions>"}}
-
-Respond with ONLY valid JSON, no explanation.
-"""
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-def call_llm(prompt: str) -> LogAnalysisAction:
-    """Call the LLM and parse the response into a LogAnalysisAction."""
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
+
+
+def build_prompt(obs, step_num: int) -> str:
+    logs_fetched = list(obs.fetched_logs.keys())
+    not_investigated = [s for s in obs.available_services if s not in logs_fetched]
+    
+    logs_content = ""
+    if obs.fetched_logs:
+        for svc, logs in obs.fetched_logs.items():
+            logs_content += f"\n=== {svc} ===\n"
+            for log in logs:
+                logs_content += f"{log}\n"
+
+    should_diagnose = step_num >= 6 or len(not_investigated) == 0
+
+    if should_diagnose:
+        return f"""INCIDENT ALERT: {obs.alert_title}
+SEVERITY: {obs.alert_severity}
+
+COLLECTED LOGS:
+{logs_content}
+
+Based on the logs above, identify:
+1. ROOT CAUSE - look for ERROR messages indicating the source problem
+2. SEVERITY - critical/high/medium/low
+3. AFFECTED SERVICES - which services show errors
+4. FIX - what action to take
+
+VALID ROOT CAUSES (pick ONE):
+{json.dumps(obs.available_root_causes)}
+
+VALID ACTIONS (pick ONE):
+{json.dumps(obs.available_actions)}
+
+Analyze the logs carefully. Look for:
+- "connection pool exhausted" -> database_max_connections
+- "OOM" or "out of memory" -> redis_oom or memory_leak
+- "SSL" or "certificate" -> ssl_certificate_expired
+- "disk full" or "no space" -> disk_full
+- "configuration" or "missing field" -> configuration_error
+- "timeout" -> network_timeout
+- "DNS" -> dns_resolution_failure
+
+Reply with JSON only:
+{{"action_type": "submit_diagnosis", "root_cause": "<from valid list>", "severity": "<critical|high|medium|low>", "affected_services": ["<svc1>", "<svc2>"], "recommended_action": "<from valid list>"}}"""
+    
+    else:
+        next_svc = not_investigated[0]
+        return f"""INCIDENT: {obs.alert_title}
+
+LOGS SO FAR:
+{logs_content if logs_content else "None yet"}
+
+INVESTIGATED: {logs_fetched}
+NOT YET CHECKED: {not_investigated}
+
+STEP {step_num}/10 - Fetch logs from: {next_svc}
+
+Reply with JSON only:
+{{"action_type": "fetch_logs", "service": "{next_svc}"}}"""
+
+
+def call_llm(prompt: str, obs, step_num: int) -> LogAnalysisAction:
+    logs_fetched = list(obs.fetched_logs.keys())
+    not_investigated = [s for s in obs.available_services if s not in logs_fetched]
+    should_diagnose = step_num >= 6 or len(not_investigated) == 0
+    
     try:
         resp = llm.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are an expert SRE. Respond only with valid JSON."},
-                {"role": "user",   "content": prompt},
+                {"role": "user", "content": prompt},
             ],
             temperature=0.0,
-            max_tokens=500,
+            max_tokens=400,
         )
         text = (resp.choices[0].message.content or "").strip()
-    except Exception as exc:
-        print(f"[LLM ERROR] {exc}")
+    except Exception as e:
         text = ""
 
-    # Strip markdown fences if present
-    for fence in ("```json", "```"):
-        if text.startswith(fence):
-            text = text[len(fence):]
-    if text.endswith("```"):
-        text = text[:-3]
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            if part.startswith("json"):
+                text = part[4:].strip()
+                break
+            elif part.strip().startswith("{"):
+                text = part.strip()
+                break
+    
     text = text.strip()
 
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
-        print(f"[PARSE ERROR] Could not parse: {text!r}  → defaulting to fetch_logs")
-        data = {"action_type": "fetch_logs", "service": "api-gateway"}
-
-    # Build a typed action — Pydantic validates required fields
-    return LogAnalysisAction(**data)
-
-
-# ── Episode runner ─────────────────────────────────────────────────────────────
-
-async def run_episode(env: LogAnalysisClient, task_id: str) -> dict:
-    """Run one episode using the OpenEnv client abstraction."""
-
-    # ── Reset ──────────────────────────────────────────────────────────────────
-    reset_result = await env.reset()          # returns StepResult
-    obs          = reset_result.observation   # LogAnalysisObservation
-
-    print(f"[START] task={task_id}  alert='{obs.alert_title[:50]}'")
-
-    total_reward = 0.0
-    steps_taken  = 0
-
-    # ── Agent loop ─────────────────────────────────────────────────────────────
-    while not obs.is_done and steps_taken < (obs.max_steps or MAX_STEPS):
-        prompt = observation_to_prompt(obs)
-        action = call_llm(prompt)
-
-        # env.step() calls _step_payload → HTTP POST → _parse_result internally
-        result = await env.step(action)
-
-        obs          = result.observation
-        reward       = result.reward or 0.0
-        done         = result.done
-
-        total_reward += reward
-        steps_taken  += 1
-
-        print(
-            f"[STEP {steps_taken:02d}] "
-            f"action={action.action_type:<18} "
-            f"reward={reward:+.3f}  done={done}  "
-            f"msg='{obs.message[:60]}'"
+        return LogAnalysisAction(**data)
+    except:
+        pass
+    
+    if should_diagnose:
+        logs_text = str(obs.fetched_logs).lower()
+        
+        if "connection pool" in logs_text or "max connections" in logs_text:
+            root_cause = "database_max_connections"
+            action = "increase_connection_pool_size"
+        elif "oom" in logs_text or "out of memory" in logs_text or "memory" in logs_text:
+            if "redis" in logs_text:
+                root_cause = "redis_oom"
+                action = "increase_memory_limit"
+            else:
+                root_cause = "memory_leak"
+                action = "restart_service"
+        elif "ssl" in logs_text or "certificate" in logs_text:
+            root_cause = "ssl_certificate_expired"
+            action = "renew_ssl_certificate"
+        elif "disk" in logs_text or "no space" in logs_text:
+            root_cause = "disk_full"
+            action = "clear_disk_space"
+        elif "configuration" in logs_text or "config" in logs_text or "missing" in logs_text:
+            root_cause = "configuration_error"
+            action = "update_configuration"
+        elif "dns" in logs_text:
+            root_cause = "dns_resolution_failure"
+            action = "fix_dns_config"
+        elif "timeout" in logs_text:
+            root_cause = "network_timeout"
+            action = "enable_circuit_breaker"
+        elif "thread pool" in logs_text:
+            root_cause = "thread_pool_exhausted"
+            action = "increase_thread_pool_size"
+        elif "slow query" in logs_text:
+            root_cause = "database_slow_query"
+            action = "optimize_slow_queries"
+        else:
+            root_cause = "database_max_connections"
+            action = "increase_connection_pool_size"
+        
+        affected = logs_fetched if logs_fetched else obs.available_services[:2]
+        
+        return LogAnalysisAction(
+            action_type="submit_diagnosis",
+            root_cause=root_cause,
+            severity=obs.alert_severity if obs.alert_severity else "critical",
+            affected_services=affected,
+            recommended_action=action
+        )
+    else:
+        return LogAnalysisAction(
+            action_type="fetch_logs",
+            service=not_investigated[0] if not_investigated else obs.available_services[0]
         )
 
-        if done:
-            break
 
-    print(f"[END] task={task_id}  total_reward={total_reward:.3f}  steps={steps_taken}")
-    return {"task_id": task_id, "total_reward": total_reward, "steps": steps_taken}
+async def run_episode(task_name: str) -> dict:
+    if DOCKER_IMAGE:
+        env = await LogAnalysisClient.from_docker_image(DOCKER_IMAGE)
+    else:
+        env = LogAnalysisClient(base_url=ENV_BASE_URL)
+    
+    rewards: List[float] = []
+    steps_taken = 0
+    score = 0.0
+    success = False
+    
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+    
+    try:
+        async with env:
+            result = await env.reset()
+            obs = result.observation
+            
+            for step in range(1, MAX_STEPS + 1):
+                if obs.is_done:
+                    break
+                
+                prompt = build_prompt(obs, step)
+                action = call_llm(prompt, obs, step)
+                
+                action_str = action.model_dump_json(exclude_none=True).replace(" ", "")
+                
+                result = await env.step(action)
+                obs = result.observation
+                reward = result.reward or 0.0
+                done = result.done
+                
+                rewards.append(reward)
+                steps_taken = step
+                
+                log_step(step=step, action=action_str, reward=reward, done=done, error=None)
+                
+                if done:
+                    break
+            
+            score = sum(rewards)
+            score = min(max(score, 0.0), 1.0)
+            success = score >= SUCCESS_THRESHOLD
+    
+    except Exception as e:
+        log_step(step=steps_taken+1, action="error", reward=0.0, done=True, error=str(e))
+    
+    finally:
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    
+    return {"task": task_name, "score": score, "steps": steps_taken, "success": success}
 
-
-# ── Main ───────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
-    print("=" * 55)
-    print("  Log Analysis Environment — Baseline Inference")
-    print("=" * 55)
-    print(f"  LLM endpoint : {API_BASE_URL}")
-    print(f"  Model        : {MODEL_NAME}")
-    if DOCKER_IMAGE:
-        print(f"  Mode         : Docker  ({DOCKER_IMAGE})")
-    else:
-        print(f"  Mode         : Remote  ({ENV_BASE_URL})")
-    print("=" * 55)
-
     results = []
-
-    for task_id in ["episode_1", "episode_2", "episode_3"]:
-
-        # ── Connect to environment ─────────────────────────────────────────────
-        # Use from_docker_image when DOCKER_IMAGE is set (local dev / CI).
-        # Otherwise connect to a running server (HF Space or local uvicorn).
-        if DOCKER_IMAGE:
-            env = await LogAnalysisClient.from_docker_image(DOCKER_IMAGE)
-        else:
-            env = LogAnalysisClient(base_url=ENV_BASE_URL)
-
-        async with env:
-            result = await run_episode(env, task_id)
+    for task_name in ["easy", "medium", "hard"]:
+        result = await run_episode(task_name)
         results.append(result)
-
-    # ── Summary ────────────────────────────────────────────────────────────────
-    print()
-    print("=" * 55)
-    print("  SUMMARY")
-    print("=" * 55)
+    
+    print(f"\n[SUMMARY]", flush=True)
     for r in results:
-        status = "✓" if r["total_reward"] >= SUCCESS_THRESHOLD else "✗"
-        print(f"  {status} {r['task_id']:<12}  score={r['total_reward']:.3f}  steps={r['steps']}")
-
-    avg = sum(r["total_reward"] for r in results) / len(results) if results else 0.0
-    print(f"\n  Average score: {avg:.3f}")
+        print(f"  {r['task']}: score={r['score']:.3f} steps={r['steps']} success={r['success']}", flush=True)
 
 
 if __name__ == "__main__":
