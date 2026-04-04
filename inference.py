@@ -39,68 +39,106 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
 
 def build_prompt(obs, step_num: int) -> str:
     logs_fetched = list(obs.fetched_logs.keys())
-    not_investigated = [s for s in obs.available_services if s not in logs_fetched]
+    metrics_fetched = list(obs.fetched_metrics.keys())
+    all_fetched = set(logs_fetched) | set(metrics_fetched)
+    not_investigated = [s for s in obs.available_services if s not in all_fetched]
+    need_metrics = [s for s in logs_fetched if s not in metrics_fetched]
     
     logs_content = ""
     if obs.fetched_logs:
         for svc, logs in obs.fetched_logs.items():
-            logs_content += f"\n=== {svc} ===\n"
+            logs_content += f"\n=== {svc} LOGS ===\n"
             for log in logs:
                 logs_content += f"{log}\n"
 
-    should_diagnose = step_num >= 6 or len(not_investigated) == 0
+    metrics_content = ""
+    if obs.fetched_metrics:
+        for svc, metrics in obs.fetched_metrics.items():
+            metrics_content += f"\n=== {svc} METRICS ===\n"
+            for k, v in metrics.items():
+                metrics_content += f"  {k}: {v}\n"
+
+    should_diagnose = step_num >= 7 or (len(not_investigated) == 0 and len(need_metrics) == 0)
 
     if should_diagnose:
-        return f"""INCIDENT ALERT: {obs.alert_title}
+        return f"""INCIDENT: {obs.alert_title}
 SEVERITY: {obs.alert_severity}
 
-COLLECTED LOGS:
-{logs_content}
+LOGS COLLECTED:
+{logs_content if logs_content else "None"}
 
-Based on the logs above, identify:
-1. ROOT CAUSE - look for ERROR messages indicating the source problem
+METRICS COLLECTED:
+{metrics_content if metrics_content else "None"}
+
+Analyze logs AND metrics to determine:
+1. ROOT CAUSE - look for errors and anomalous metrics
 2. SEVERITY - critical/high/medium/low
-3. AFFECTED SERVICES - which services show errors
-4. FIX - what action to take
+3. AFFECTED SERVICES - which show problems
+4. FIX - recommended action
 
-VALID ROOT CAUSES (pick ONE):
-{json.dumps(obs.available_root_causes)}
-
-VALID ACTIONS (pick ONE):
-{json.dumps(obs.available_actions)}
-
-Analyze the logs carefully. Look for:
-- "connection pool exhausted" -> database_max_connections
-- "OOM" or "out of memory" -> redis_oom or memory_leak
+Key patterns:
+- "connection pool exhausted" + high connections_active -> database_max_connections
+- "OOM" + memory_usage 99% -> redis_oom or memory_leak
 - "SSL" or "certificate" -> ssl_certificate_expired
-- "disk full" or "no space" -> disk_full
-- "configuration" or "missing field" -> configuration_error
-- "timeout" -> network_timeout
-- "DNS" -> dns_resolution_failure
+- "disk full" -> disk_full
+- "configuration" error -> configuration_error
+- "DNS" errors -> dns_resolution_failure
+- "timeout" + high latency -> network_timeout
+- "thread pool" + high threads_active -> thread_pool_exhausted
+- CPU 98%+ with throttling -> cpu_throttling
+- "slow query" + high CPU on database -> database_slow_query
 
-Reply with JSON only:
-{{"action_type": "submit_diagnosis", "root_cause": "<from valid list>", "severity": "<critical|high|medium|low>", "affected_services": ["<svc1>", "<svc2>"], "recommended_action": "<from valid list>"}}"""
+VALID ROOT CAUSES: {obs.available_root_causes}
+VALID ACTIONS: {obs.available_actions}
+
+Reply JSON only:
+{{"action_type": "submit_diagnosis", "root_cause": "<from list>", "severity": "<level>", "affected_services": ["<svc1>", "<svc2>"], "recommended_action": "<from list>"}}"""
     
-    else:
-        next_svc = not_investigated[0]
+    elif need_metrics:
+        svc = need_metrics[0]
         return f"""INCIDENT: {obs.alert_title}
 
-LOGS SO FAR:
-{logs_content if logs_content else "None yet"}
+LOGS: {logs_fetched}
+METRICS: {metrics_fetched}
 
-INVESTIGATED: {logs_fetched}
-NOT YET CHECKED: {not_investigated}
+You have logs from {svc} but no metrics. Fetch metrics to see CPU, memory, error_rate, connections.
 
-STEP {step_num}/10 - Fetch logs from: {next_svc}
+STEP {step_num}/10
 
-Reply with JSON only:
-{{"action_type": "fetch_logs", "service": "{next_svc}"}}"""
+Reply JSON only:
+{{"action_type": "fetch_metrics", "service": "{svc}"}}"""
+    
+    elif not_investigated:
+        svc = not_investigated[0]
+        return f"""INCIDENT: {obs.alert_title}
+
+INVESTIGATED: {list(all_fetched)}
+NOT CHECKED: {not_investigated}
+
+STEP {step_num}/10 - Fetch logs from: {svc}
+
+Reply JSON only:
+{{"action_type": "fetch_logs", "service": "{svc}"}}"""
+    
+    else:
+        return f"""INCIDENT: {obs.alert_title}
+
+All services checked. Submit diagnosis now.
+
+LOGS: {logs_fetched}
+METRICS: {metrics_fetched}
+
+Reply with submit_diagnosis action."""
 
 
 def call_llm(prompt: str, obs, step_num: int) -> LogAnalysisAction:
     logs_fetched = list(obs.fetched_logs.keys())
-    not_investigated = [s for s in obs.available_services if s not in logs_fetched]
-    should_diagnose = step_num >= 6 or len(not_investigated) == 0
+    metrics_fetched = list(obs.fetched_metrics.keys())
+    all_fetched = set(logs_fetched) | set(metrics_fetched)
+    not_investigated = [s for s in obs.available_services if s not in all_fetched]
+    need_metrics = [s for s in logs_fetched if s not in metrics_fetched]
+    
+    should_diagnose = step_num >= 7 or (len(not_investigated) == 0 and len(need_metrics) == 0)
     
     try:
         resp = llm.chat.completions.create(
@@ -135,38 +173,42 @@ def call_llm(prompt: str, obs, step_num: int) -> LogAnalysisAction:
     
     if should_diagnose:
         logs_text = str(obs.fetched_logs).lower()
+        metrics_text = str(obs.fetched_metrics).lower()
+        combined = logs_text + metrics_text
         
-        if "connection pool" in logs_text or "max connections" in logs_text:
+        if "connection pool" in combined or ("connections_active" in combined and "100" in metrics_text):
             root_cause = "database_max_connections"
             action = "increase_connection_pool_size"
-        elif "oom" in logs_text or "out of memory" in logs_text or "memory" in logs_text:
-            if "redis" in logs_text:
-                root_cause = "redis_oom"
-                action = "increase_memory_limit"
-            else:
-                root_cause = "memory_leak"
-                action = "restart_service"
-        elif "ssl" in logs_text or "certificate" in logs_text:
+        elif ("oom" in combined or "out of memory" in combined) and "redis" in combined:
+            root_cause = "redis_oom"
+            action = "increase_memory_limit"
+        elif "memory" in combined and ("99" in metrics_text or "98" in metrics_text or "leak" in combined):
+            root_cause = "memory_leak"
+            action = "restart_service"
+        elif "ssl" in combined or "certificate" in combined:
             root_cause = "ssl_certificate_expired"
             action = "renew_ssl_certificate"
-        elif "disk" in logs_text or "no space" in logs_text:
+        elif "disk" in combined or "no space" in combined:
             root_cause = "disk_full"
             action = "clear_disk_space"
-        elif "configuration" in logs_text or "config" in logs_text or "missing" in logs_text:
+        elif "configuration" in combined or "config" in combined or "missing" in combined:
             root_cause = "configuration_error"
             action = "update_configuration"
-        elif "dns" in logs_text:
+        elif "dns" in combined:
             root_cause = "dns_resolution_failure"
             action = "fix_dns_config"
-        elif "timeout" in logs_text:
-            root_cause = "network_timeout"
-            action = "enable_circuit_breaker"
-        elif "thread pool" in logs_text:
+        elif "thread pool" in combined or "threads_active" in combined:
             root_cause = "thread_pool_exhausted"
             action = "increase_thread_pool_size"
-        elif "slow query" in logs_text:
+        elif "throttl" in combined or ("cpu" in combined and "98" in metrics_text):
+            root_cause = "cpu_throttling"
+            action = "scale_horizontally"
+        elif "slow query" in combined or "full table scan" in combined:
             root_cause = "database_slow_query"
             action = "optimize_slow_queries"
+        elif "timeout" in combined or "retry" in combined:
+            root_cause = "network_timeout"
+            action = "enable_circuit_breaker"
         else:
             root_cause = "database_max_connections"
             action = "increase_connection_pool_size"
@@ -176,14 +218,24 @@ def call_llm(prompt: str, obs, step_num: int) -> LogAnalysisAction:
         return LogAnalysisAction(
             action_type="submit_diagnosis",
             root_cause=root_cause,
-            severity=obs.alert_severity if obs.alert_severity else "critical",
+            severity=obs.alert_severity if obs.alert_severity else "high",
             affected_services=affected,
             recommended_action=action
+        )
+    elif need_metrics:
+        return LogAnalysisAction(
+            action_type="fetch_metrics",
+            service=need_metrics[0]
+        )
+    elif not_investigated:
+        return LogAnalysisAction(
+            action_type="fetch_logs",
+            service=not_investigated[0]
         )
     else:
         return LogAnalysisAction(
             action_type="fetch_logs",
-            service=not_investigated[0] if not_investigated else obs.available_services[0]
+            service=obs.available_services[0]
         )
 
 

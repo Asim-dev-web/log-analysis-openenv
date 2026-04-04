@@ -1,5 +1,3 @@
-"""Scenarios for the Log Analysis Environment."""
-
 ALL_ROOT_CAUSES = [
     "database_max_connections",
     "database_connection_timeout",
@@ -36,13 +34,14 @@ ALL_RECOMMENDED_ACTIONS = [
     "increase_thread_pool_size",
     "optimize_slow_queries",
     "enable_rate_limiting",
-    "update_configuration",      
-    "enable_circuit_breaker"
+    "update_configuration",
+    "enable_circuit_breaker",
 ]
 
 # ============================================================
-# EASY SCENARIO
+# EASY SCENARIOS (6) - Obvious errors in logs
 # ============================================================
+
 SCENARIO_DATABASE_OVERLOAD = {
     "id": "database_overload",
     "name": "Database Connection Pool Exhausted",
@@ -211,9 +210,97 @@ SCENARIO_CONFIG_ERROR = {
     },
 }
 
+SCENARIO_NULL_POINTER = {
+    "id": "null_pointer_exception",
+    "name": "Null Pointer Exception in Production",
+    "difficulty": "easy",
+    "alert": {
+        "title": "cart-service returning 500 errors (100% failure)",
+        "severity": "critical"
+    },
+    "services": ["api-gateway", "cart-service", "product-service"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Request to /cart/add",
+            "[10:23:45] ERROR: cart-service returned 500 Internal Server Error",
+            "[10:23:46] ERROR: cart-service returned 500 Internal Server Error",
+            "[10:23:47] ERROR: cart-service returned 500 Internal Server Error",
+        ],
+        "cart-service": [
+            "[10:23:45] INFO: Adding item to cart",
+            "[10:23:45] ERROR: NullPointerException at CartService.java:142",
+            "[10:23:45] ERROR: java.lang.NullPointerException: Cannot invoke method on null object",
+            "[10:23:45] ERROR: Stack trace: CartService.addItem(CartService.java:142)",
+            "[10:23:46] ERROR: NullPointerException at CartService.java:142",
+            "[10:23:47] ERROR: Service unhealthy due to repeated exceptions",
+        ],
+        "product-service": [
+            "[10:23:45] INFO: Product lookup successful",
+            "[10:23:46] INFO: Returning product details",
+            "[10:23:47] INFO: All requests processed normally",
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 35.0, "memory_usage": 50.0, "error_rate": 33.0, "latency_p99": 100},
+        "cart-service": {"cpu_usage": 10.0, "memory_usage": 45.0, "error_rate": 100.0, "latency_p99": 50},
+        "product-service": {"cpu_usage": 25.0, "memory_usage": 40.0, "error_rate": 0.0, "latency_p99": 80},
+    },
+    "ground_truth": {
+        "root_cause": "null_pointer_exception",
+        "severity": "critical",
+        "affected_services": ["cart-service", "api-gateway"],
+        "recommended_action": "rollback_deployment",
+    },
+}
+
+SCENARIO_BAD_DEPLOYMENT = {
+    "id": "bad_deployment",
+    "name": "Bad Deployment Causing Crashes",
+    "difficulty": "easy",
+    "alert": {
+        "title": "auth-service crash loop after deployment",
+        "severity": "critical"
+    },
+    "services": ["api-gateway", "auth-service", "user-service"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Routing to auth-service",
+            "[10:23:45] ERROR: auth-service connection refused",
+            "[10:23:46] ERROR: auth-service not available",
+            "[10:23:50] ERROR: auth-service connection refused",
+        ],
+        "auth-service": [
+            "[10:23:40] INFO: Starting auth-service v2.5.0",
+            "[10:23:41] INFO: Deployed version: 2.5.0 (deployed 5 mins ago)",
+            "[10:23:42] ERROR: Failed to initialize OAuth provider",
+            "[10:23:42] ERROR: Missing required dependency: oauth-lib v2.0",
+            "[10:23:43] FATAL: Application startup failed",
+            "[10:23:45] INFO: Restarting auth-service v2.5.0 (attempt 2)",
+            "[10:23:46] FATAL: Application startup failed",
+        ],
+        "user-service": [
+            "[10:23:45] INFO: Processing user request",
+            "[10:23:46] ERROR: Cannot validate token: auth-service unavailable",
+            "[10:23:47] WARN: Falling back to cached auth",
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 30.0, "memory_usage": 45.0, "error_rate": 40.0, "latency_p99": 200},
+        "auth-service": {"cpu_usage": 5.0, "memory_usage": 15.0, "error_rate": 100.0, "latency_p99": 0},
+        "user-service": {"cpu_usage": 35.0, "memory_usage": 50.0, "error_rate": 25.0, "latency_p99": 500},
+    },
+    "ground_truth": {
+        "root_cause": "bad_deployment",
+        "severity": "critical",
+        "affected_services": ["auth-service", "api-gateway", "user-service"],
+        "recommended_action": "rollback_deployment",
+    },
+}
+
 # ============================================================
-# MEDIUM SCENARIO
+# MEDIUM SCENARIOS (6) - Red herrings, need to correlate
 # ============================================================
+
 SCENARIO_REDIS_CASCADE = {
     "id": "redis_cascade",
     "name": "Redis OOM Causing Cascade Failure",
@@ -228,7 +315,7 @@ SCENARIO_REDIS_CASCADE = {
             "[10:23:45] INFO: Processing checkout for order 456",
             "[10:23:46] WARN: Slow response from inventory-service (2340ms)",
             "[10:23:47] ERROR: Timeout waiting for inventory-service",
-            "[10:23:48] WARN: Memory usage high (78%)",  # RED HERRING
+            "[10:23:48] WARN: High memory usage detected",
         ],
         "inventory-service": [
             "[10:23:44] INFO: Checking stock for SKU-1234",
@@ -243,8 +330,8 @@ SCENARIO_REDIS_CASCADE = {
             "[10:23:42] ERROR: OOM command not allowed when used memory > maxmemory",
         ],
         "payment-service": [
-            "[10:23:45] INFO: Payment processed successfully",  
-            "[10:23:46] WARN: SSL certificate expiring in 7 days",  
+            "[10:23:45] INFO: Payment processed successfully",
+            "[10:23:46] WARN: SSL certificate expiring in 7 days",
         ],
     },
     "metrics": {
@@ -288,11 +375,11 @@ SCENARIO_MEMORY_LEAK = {
         "elasticsearch": [
             "[10:20:00] INFO: Query received from search-service",
             "[10:21:00] INFO: Query response time: 45ms",
-            "[10:22:00] INFO: Cluster health: green",  
+            "[10:22:00] INFO: Cluster health: green",
         ],
         "cache-service": [
             "[10:20:00] INFO: Cache hit ratio: 85%",
-            "[10:21:00] INFO: Cache hit ratio: 60%", 
+            "[10:21:00] INFO: Cache hit ratio: 60%",
             "[10:22:00] WARN: Cache evictions increasing",
         ],
     },
@@ -342,9 +429,9 @@ SCENARIO_DNS_FAILURE = {
             "[10:23:46] WARN: DNS cache cleared unexpectedly",
         ],
         "network-monitor": [
-            "[10:23:00] INFO: Network configuration changed", 
+            "[10:23:00] INFO: Network configuration changed",
             "[10:23:01] INFO: New DNS server: 10.0.0.53",
-            "[10:23:30] WARN: Packet loss detected: 5%", 
+            "[10:23:30] WARN: Packet loss detected: 5%",
         ],
     },
     "metrics": {
@@ -392,8 +479,8 @@ SCENARIO_SLOW_QUERY = {
             "[10:24:30] ERROR: Query consuming excessive resources",
         ],
         "cache-service": [
-            "[10:23:45] INFO: Cache miss for report:monthly:2024", 
-            "[10:23:46] INFO: Cache hit ratio: 95%", 
+            "[10:23:45] INFO: Cache miss for report:monthly:2024",
+            "[10:23:46] INFO: Cache hit ratio: 95%",
         ],
     },
     "metrics": {
@@ -410,10 +497,114 @@ SCENARIO_SLOW_QUERY = {
     },
 }
 
+SCENARIO_CACHE_STAMPEDE = {
+    "id": "cache_miss_storm",
+    "name": "Cache Stampede After TTL Expiry",
+    "difficulty": "medium",
+    "alert": {
+        "title": "Database CPU spike to 100%, multiple service timeouts",
+        "severity": "high"
+    },
+    "services": ["api-gateway", "product-service", "cache", "database"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Request to /products/popular",
+            "[10:23:46] WARN: product-service response slow (3500ms)",
+            "[10:23:47] ERROR: Timeout from product-service",
+            "[10:23:48] ERROR: Multiple timeout errors",
+        ],
+        "product-service": [
+            "[10:23:45] INFO: Fetching popular products",
+            "[10:23:45] WARN: Cache miss for popular_products",
+            "[10:23:45] INFO: Querying database...",
+            "[10:23:46] WARN: Cache miss for popular_products (concurrent request)",
+            "[10:23:46] WARN: Cache miss for popular_products (concurrent request)",
+            "[10:23:47] ERROR: Database query timeout",
+        ],
+        "cache": [
+            "[10:23:44] INFO: Key popular_products expired (TTL: 3600s)",
+            "[10:23:45] INFO: Cache miss: popular_products",
+            "[10:23:45] INFO: Cache miss: popular_products",
+            "[10:23:45] INFO: Cache miss: popular_products",
+            "[10:23:46] WARN: High miss rate detected",
+        ],
+        "database": [
+            "[10:23:45] INFO: Query from product-service",
+            "[10:23:45] INFO: Query from product-service (duplicate)",
+            "[10:23:45] INFO: Query from product-service (duplicate)",
+            "[10:23:46] WARN: CPU at 95%",
+            "[10:23:47] ERROR: Too many concurrent queries",
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 40.0, "memory_usage": 50.0, "error_rate": 35.0, "latency_p99": 5000},
+        "product-service": {"cpu_usage": 60.0, "memory_usage": 55.0, "error_rate": 40.0, "latency_p99": 4000},
+        "cache": {"cpu_usage": 20.0, "memory_usage": 45.0, "error_rate": 0.0, "latency_p99": 5},
+        "database": {"cpu_usage": 100.0, "memory_usage": 80.0, "connections_active": 95, "threads_active": 95},
+    },
+    "ground_truth": {
+        "root_cause": "cache_miss_storm",
+        "severity": "high",
+        "affected_services": ["cache", "database", "product-service", "api-gateway"],
+        "recommended_action": "enable_rate_limiting",
+    },
+}
+
+SCENARIO_DEADLOCK = {
+    "id": "database_deadlock",
+    "name": "Database Deadlock Between Services",
+    "difficulty": "medium",
+    "alert": {
+        "title": "order-service and inventory-service both timing out",
+        "severity": "high"
+    },
+    "services": ["api-gateway", "order-service", "inventory-service", "database"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Request to /orders/create",
+            "[10:23:50] WARN: order-service slow response (5000ms)",
+            "[10:23:55] ERROR: order-service timeout",
+            "[10:23:56] ERROR: inventory-service timeout",
+        ],
+        "order-service": [
+            "[10:23:45] INFO: Creating order #789",
+            "[10:23:45] INFO: Acquiring lock on orders table",
+            "[10:23:46] INFO: Waiting for inventory lock...",
+            "[10:23:50] WARN: Still waiting for inventory lock (5s)",
+            "[10:23:55] ERROR: Lock wait timeout exceeded",
+        ],
+        "inventory-service": [
+            "[10:23:45] INFO: Updating inventory for SKU-100",
+            "[10:23:45] INFO: Acquiring lock on inventory table",
+            "[10:23:46] INFO: Waiting for orders lock...",
+            "[10:23:50] WARN: Still waiting for orders lock (5s)",
+            "[10:23:55] ERROR: Lock wait timeout exceeded",
+        ],
+        "database": [
+            "[10:23:45] INFO: Transaction started: order-service",
+            "[10:23:45] INFO: Transaction started: inventory-service",
+            "[10:23:50] WARN: Deadlock detected between transactions",
+            "[10:23:55] ERROR: Deadlock victim: transaction rolled back",
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 35.0, "memory_usage": 50.0, "error_rate": 25.0, "latency_p99": 6000},
+        "order-service": {"cpu_usage": 20.0, "memory_usage": 45.0, "error_rate": 50.0, "latency_p99": 5500},
+        "inventory-service": {"cpu_usage": 20.0, "memory_usage": 45.0, "error_rate": 50.0, "latency_p99": 5500},
+        "database": {"cpu_usage": 40.0, "memory_usage": 50.0, "connections_active": 80, "threads_active": 75},
+    },
+    "ground_truth": {
+        "root_cause": "database_deadlock",
+        "severity": "high",
+        "affected_services": ["database", "order-service", "inventory-service"],
+        "recommended_action": "restart_service",
+    },
+}
 
 # ============================================================
-# HARD SCENARIO
+# HARD SCENARIOS (6) - Metrics required, subtle clues
 # ============================================================
+
 SCENARIO_INTERMITTENT_THREAD_POOL = {
     "id": "intermittent_thread_pool",
     "name": "Batch Job Saturating Thread Pool",
@@ -441,9 +632,9 @@ SCENARIO_INTERMITTENT_THREAD_POOL = {
             "[10:23:50] INFO: Request processed (38ms)",
         ],
         "user-service-3": [
-            "[10:23:45] INFO: Health check passed",  
+            "[10:23:45] INFO: Health check passed",
             "[10:23:47] ERROR: Thread pool exhausted, rejecting request",
-            "[10:23:48] INFO: Health check passed", 
+            "[10:23:48] INFO: Health check passed",
             "[10:23:50] ERROR: Thread pool exhausted, rejecting request",
             "[10:23:55] INFO: Thread pool recovered (12/100 active)",
         ],
@@ -455,7 +646,7 @@ SCENARIO_INTERMITTENT_THREAD_POOL = {
         ],
         "load-balancer": [
             "[10:23:00] INFO: Health check config: endpoint=/health, interval=30s",
-            "[10:23:30] INFO: All backends healthy",  
+            "[10:23:30] INFO: All backends healthy",
         ],
     },
     "metrics": {
@@ -501,7 +692,7 @@ SCENARIO_CONNECTION_LEAK = {
         ],
         "inventory-service": [
             "[11:00:00] INFO: Database query completed",
-            "[11:00:00] INFO: Connection released back to pool",  
+            "[11:00:00] INFO: Connection released back to pool",
             "[11:30:00] INFO: Operating normally",
         ],
         "database": [
@@ -512,8 +703,8 @@ SCENARIO_CONNECTION_LEAK = {
             "[11:30:01] INFO: All connections from order-service IP",
         ],
         "monitoring": [
-            "[11:00:00] INFO: Memory usage stable",  
-            "[11:00:00] INFO: CPU usage normal",  
+            "[11:00:00] INFO: Memory usage stable",
+            "[11:00:00] INFO: CPU usage normal",
             "[11:30:00] WARN: Connection count trending up over 2 hours",
         ],
     },
@@ -557,7 +748,7 @@ SCENARIO_RETRY_STORM = {
             "[10:23:50] ERROR: All retries failed",
         ],
         "payment-service": [
-            "[10:23:44] WARN: External payment gateway slow (2000ms)",  
+            "[10:23:44] WARN: External payment gateway slow (2000ms)",
             "[10:23:45] ERROR: Request queue full, rejecting requests",
             "[10:23:46] ERROR: 503 Service Unavailable",
             "[10:23:50] ERROR: Overwhelmed by retry requests",
@@ -570,7 +761,7 @@ SCENARIO_RETRY_STORM = {
         ],
         "queue-worker": [
             "[10:23:45] INFO: Processing background jobs normally",
-            "[10:23:46] INFO: Job queue size: 100",  
+            "[10:23:46] INFO: Job queue size: 100",
         ],
     },
     "metrics": {
@@ -588,79 +779,202 @@ SCENARIO_RETRY_STORM = {
     },
 }
 
-SCENARIO_CLOCK_SKEW = {
-    "id": "clock_skew",
-    "name": "Clock Skew Causing Auth Failures",
+SCENARIO_CPU_THROTTLING = {
+    "id": "cpu_throttling",
+    "name": "CPU Throttling Due to Container Limits",
     "difficulty": "hard",
     "alert": {
-        "title": "Intermittent authentication failures (30% error rate)",
-        "severity": "high"
+        "title": "Inconsistent latency spikes on compute-service",
+        "severity": "medium"
     },
-    "services": ["api-gateway", "auth-service", "user-service", "token-validator", "ntp-server"],
+    "services": ["api-gateway", "compute-service", "data-service", "scheduler", "metrics-collector"],
     "logs": {
         "api-gateway": [
-            "[10:23:45] INFO: Request with JWT token received",
-            "[10:23:45] INFO: Forwarding to auth-service for validation",
-            "[10:23:46] ERROR: Auth failed: token not yet valid",
-            "[10:23:47] INFO: Different request succeeded",
-            "[10:23:48] ERROR: Auth failed: token expired",  
+            "[10:23:45] INFO: Request to compute-service (45ms)",
+            "[10:23:46] INFO: Request to compute-service (52ms)",
+            "[10:23:47] INFO: Request to compute-service (1250ms)",
+            "[10:23:48] INFO: Request to compute-service (48ms)",
+            "[10:23:49] INFO: Request to compute-service (1340ms)",
         ],
-        "auth-service": [
-            "[10:23:45] INFO: Validating JWT token",
-            "[10:23:45] INFO: Token issued at: 10:23:40",
-            "[10:23:45] INFO: Current server time: 10:23:45",
-            "[10:23:46] INFO: Token validation successful",
+        "compute-service": [
+            "[10:23:45] INFO: Processing calculation request",
+            "[10:23:46] INFO: Computation completed (40ms)",
+            "[10:23:47] INFO: Processing calculation request",
+            "[10:23:47] INFO: Computation completed (1200ms)",
+            "[10:23:48] DEBUG: Container stats normal",
         ],
-        "user-service": [
-            "[10:23:45] INFO: Operating normally",
-            "[10:23:46] INFO: User lookup completed",
+        "data-service": [
+            "[10:23:45] INFO: Data fetch completed (10ms)",
+            "[10:23:46] INFO: Data fetch completed (12ms)",
+            "[10:23:47] INFO: Data fetch completed (11ms)",
         ],
-        "token-validator": [
-            "[10:23:45] INFO: Validating token timestamp",
-            "[10:23:45] ERROR: Token nbf (not before) is in the future",
-            "[10:23:45] INFO: Server time: 10:23:35",  
-            "[10:23:46] ERROR: Clock skew detected: -10 seconds",
+        "scheduler": [
+            "[10:23:00] INFO: Pod compute-service scheduled on node-3",
+            "[10:23:01] INFO: CPU limit: 1000m, Memory limit: 2Gi",
+            "[10:23:30] INFO: Node-3 load: 85%",
         ],
-        "ntp-server": [
-            "[10:20:00] WARN: NTP sync failed for token-validator",
-            "[10:21:00] WARN: token-validator clock drifting",
-            "[10:23:00] ERROR: token-validator 10 seconds behind",
+        "metrics-collector": [
+            "[10:23:45] INFO: compute-service CPU: 95%",
+            "[10:23:46] INFO: compute-service CPU: 98%",
+            "[10:23:47] WARN: compute-service CPU throttled",
+            "[10:23:48] INFO: compute-service CPU: 45%",
+            "[10:23:49] WARN: compute-service CPU throttled",
         ],
     },
     "metrics": {
-        "api-gateway": {"cpu_usage": 40.0, "memory_usage": 55.0, "error_rate": 30.0, "latency_p99": 500},
-        "auth-service": {"cpu_usage": 35.0, "memory_usage": 50.0, "error_rate": 0.0, "latency_p99": 100},
-        "user-service": {"cpu_usage": 25.0, "memory_usage": 45.0, "error_rate": 0.0, "latency_p99": 80},
-        "token-validator": {"cpu_usage": 30.0, "memory_usage": 40.0, "error_rate": 30.0, "latency_p99": 50},
-        "ntp-server": {"cpu_usage": 5.0, "memory_usage": 15.0, "error_rate": 10.0, "latency_p99": 5},
+        "api-gateway": {"cpu_usage": 30.0, "memory_usage": 45.0, "error_rate": 0.0, "latency_p99": 1500},
+        "compute-service": {"cpu_usage": 98.0, "memory_usage": 60.0, "error_rate": 0.0, "latency_p99": 1300},
+        "data-service": {"cpu_usage": 15.0, "memory_usage": 35.0, "error_rate": 0.0, "latency_p99": 15},
+        "scheduler": {"cpu_usage": 10.0, "memory_usage": 25.0, "error_rate": 0.0, "latency_p99": 5},
+        "metrics-collector": {"cpu_usage": 8.0, "memory_usage": 20.0, "error_rate": 0.0, "latency_p99": 10},
     },
     "ground_truth": {
-        "root_cause": "configuration_error",
-        "severity": "high",
-        "affected_services": ["token-validator", "api-gateway", "ntp-server"],
+        "root_cause": "cpu_throttling",
+        "severity": "medium",
+        "affected_services": ["compute-service", "api-gateway"],
+        "recommended_action": "scale_horizontally",
+    },
+}
+
+SCENARIO_NETWORK_PARTITION = {
+    "id": "network_partition",
+    "name": "Network Partition Between Data Centers",
+    "difficulty": "hard",
+    "alert": {
+        "title": "Inconsistent data between primary and replica databases",
+        "severity": "critical"
+    },
+    "services": ["api-gateway", "write-service", "read-service", "database-primary", "database-replica", "network-monitor"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Write request to write-service",
+            "[10:23:46] INFO: Read request to read-service",
+            "[10:23:47] WARN: Read returned stale data",
+            "[10:23:48] INFO: Write request completed",
+            "[10:23:49] ERROR: Read-after-write inconsistency detected",
+        ],
+        "write-service": [
+            "[10:23:45] INFO: Writing to primary database",
+            "[10:23:46] INFO: Write successful",
+            "[10:23:47] INFO: Replication pending...",
+            "[10:23:50] WARN: Replication lag: 5000ms",
+        ],
+        "read-service": [
+            "[10:23:46] INFO: Reading from replica",
+            "[10:23:46] INFO: Returned cached data",
+            "[10:23:47] WARN: Data appears outdated",
+        ],
+        "database-primary": [
+            "[10:23:45] INFO: Write committed",
+            "[10:23:46] WARN: Replication stream slow",
+            "[10:23:47] ERROR: Cannot reach replica: connection timeout",
+            "[10:23:50] ERROR: Replication lag exceeds threshold",
+        ],
+        "database-replica": [
+            "[10:23:45] INFO: Streaming from primary",
+            "[10:23:46] WARN: Stream interrupted",
+            "[10:23:47] ERROR: Lost connection to primary",
+            "[10:23:50] INFO: Serving stale data (last sync: 30s ago)",
+        ],
+        "network-monitor": [
+            "[10:23:40] WARN: Packet loss between DC1 and DC2: 15%",
+            "[10:23:45] ERROR: Network partition detected",
+            "[10:23:50] WARN: Latency between DCs: 500ms (normal: 10ms)",
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 35.0, "memory_usage": 50.0, "error_rate": 10.0, "latency_p99": 300},
+        "write-service": {"cpu_usage": 30.0, "memory_usage": 45.0, "error_rate": 0.0, "latency_p99": 100},
+        "read-service": {"cpu_usage": 25.0, "memory_usage": 40.0, "error_rate": 5.0, "latency_p99": 50},
+        "database-primary": {"cpu_usage": 40.0, "memory_usage": 60.0, "connections_active": 30, "threads_active": 25},
+        "database-replica": {"cpu_usage": 20.0, "memory_usage": 55.0, "connections_active": 40, "threads_active": 15},
+        "network-monitor": {"cpu_usage": 10.0, "memory_usage": 20.0, "error_rate": 0.0, "latency_p99": 5},
+    },
+    "ground_truth": {
+        "root_cause": "network_partition",
+        "severity": "critical",
+        "affected_services": ["database-primary", "database-replica", "write-service", "read-service"],
         "recommended_action": "fix_dns_config",
     },
 }
 
+SCENARIO_REDIS_CONNECTION_POOL = {
+    "id": "redis_connection_exhausted",
+    "name": "Redis Connection Pool Exhausted By Background Jobs",
+    "difficulty": "hard",
+    "alert": {
+        "title": "Session service timing out sporadically",
+        "severity": "high"
+    },
+    "services": ["api-gateway", "session-service", "redis", "analytics-worker", "job-scheduler"],
+    "logs": {
+        "api-gateway": [
+            "[10:23:45] INFO: Request with session validation",
+            "[10:23:46] INFO: Session validated (15ms)",
+            "[10:23:47] ERROR: Session validation timeout",
+            "[10:23:48] INFO: Session validated (12ms)",
+            "[10:23:49] ERROR: Session validation timeout",
+        ],
+        "session-service": [
+            "[10:23:45] INFO: Validating session token",
+            "[10:23:46] INFO: Redis lookup successful",
+            "[10:23:47] ERROR: Cannot get Redis connection: pool exhausted",
+            "[10:23:48] INFO: Redis lookup successful",
+            "[10:23:49] ERROR: Redis connection timeout after 5s",
+        ],
+        "redis": [
+            "[10:23:40] INFO: Active connections: 95/100",
+            "[10:23:45] WARN: Connection pool at 98%",
+            "[10:23:47] ERROR: Max connections reached",
+            "[10:23:48] INFO: Connection released",
+            "[10:23:49] ERROR: Max connections reached",
+        ],
+        "analytics-worker": [
+            "[10:23:00] INFO: Starting hourly analytics job",
+            "[10:23:01] INFO: Opening 50 Redis connections for parallel processing",
+            "[10:23:30] INFO: Processing 1M events...",
+            "[10:23:45] INFO: Still processing, holding connections",
+        ],
+        "job-scheduler": [
+            "[10:23:00] INFO: Triggered analytics-worker job",
+            "[10:23:01] INFO: Job running normally",
+            "[10:23:30] INFO: No issues detected",
+        ],
+    },
+    "metrics": {
+        "api-gateway": {"cpu_usage": 35.0, "memory_usage": 50.0, "error_rate": 15.0, "latency_p99": 5200},
+        "session-service": {"cpu_usage": 25.0, "memory_usage": 40.0, "error_rate": 20.0, "latency_p99": 5100},
+        "redis": {"cpu_usage": 45.0, "memory_usage": 60.0, "connections_active": 100, "threads_active": 4},
+        "analytics-worker": {"cpu_usage": 80.0, "memory_usage": 70.0, "error_rate": 0.0, "connections_active": 50},
+        "job-scheduler": {"cpu_usage": 10.0, "memory_usage": 25.0, "error_rate": 0.0, "latency_p99": 10},
+    },
+    "ground_truth": {
+        "root_cause": "redis_connection_pool_exhausted",
+        "severity": "high",
+        "affected_services": ["analytics-worker", "redis", "session-service", "api-gateway"],
+        "recommended_action": "increase_connection_pool_size",
+    },
+}
 
 ALL_SCENARIOS = [
-    # Easy (4)
     SCENARIO_DATABASE_OVERLOAD,
     SCENARIO_SSL_EXPIRED,
     SCENARIO_DISK_FULL,
     SCENARIO_CONFIG_ERROR,
-    
-    # Medium (4)
+    SCENARIO_NULL_POINTER,
+    SCENARIO_BAD_DEPLOYMENT,
     SCENARIO_REDIS_CASCADE,
     SCENARIO_MEMORY_LEAK,
     SCENARIO_DNS_FAILURE,
     SCENARIO_SLOW_QUERY,
-    
-    # Hard (4)
+    SCENARIO_CACHE_STAMPEDE,
+    SCENARIO_DEADLOCK,
     SCENARIO_INTERMITTENT_THREAD_POOL,
     SCENARIO_CONNECTION_LEAK,
     SCENARIO_RETRY_STORM,
-    SCENARIO_CLOCK_SKEW,
+    SCENARIO_CPU_THROTTLING,
+    SCENARIO_NETWORK_PARTITION,
+    SCENARIO_REDIS_CONNECTION_POOL,
 ]
 
 SCENARIOS_BY_DIFFICULTY = {

@@ -57,7 +57,7 @@ class LogAnalysisEnvironment(Environment):
 
         services = _SHARED_STATE["scenario"]["services"]
         return self._make_observation(
-            f"Investigation started. Alert received. Available services to investigate: {services}. Use fetch_logs or fetch_metrics to gather evidence, then submit_diagnosis.",
+            f"Investigation started. Alert received. Services: {services}. Use fetch_logs AND fetch_metrics to gather evidence, then submit_diagnosis.",
             0.0
         )
 
@@ -102,7 +102,7 @@ class LogAnalysisEnvironment(Environment):
         if _SHARED_STATE["step_count"] >= self.MAX_STEPS and not _SHARED_STATE["is_done"]:
             _SHARED_STATE["is_done"] = True
             if not _SHARED_STATE["diagnosis_submitted"]:
-                message += " Max steps reached without diagnosis. Use submit_diagnosis action with root_cause, severity, affected_services, and recommended_action fields."
+                message += " Max steps reached without diagnosis."
 
         return self._make_observation(message, reward)
 
@@ -111,71 +111,67 @@ class LogAnalysisEnvironment(Environment):
         services = _SHARED_STATE["scenario"]["services"]
         
         if not service:
-            return 0.0, f"Error: 'service' field required. Available services: {services}"
+            return 0.0, f"Error: 'service' field required. Available: {services}"
         
         if service not in services:
-            return 0.0, f"Error: Unknown service '{service}'. Available services: {services}"
+            return 0.0, f"Error: Unknown service '{service}'. Available: {services}"
         
         if service in _SHARED_STATE["fetched_logs"]:
+            need_metrics = [s for s in _SHARED_STATE["fetched_logs"].keys() if s not in _SHARED_STATE["fetched_metrics"]]
+            if need_metrics:
+                return 0.0, f"Already have logs from '{service}'. Now fetch_metrics from: {need_metrics}"
             not_fetched = [s for s in services if s not in _SHARED_STATE["fetched_logs"]]
             if not_fetched:
-                return 0.0, f"Already fetched logs from '{service}'. Services not yet investigated: {not_fetched}"
-            return 0.0, f"Already fetched logs from '{service}'. All services investigated. Use submit_diagnosis now with root_cause, severity, affected_services, recommended_action."
+                return 0.0, f"Already have logs from '{service}'. Try: {not_fetched}"
+            return 0.0, f"Already have logs from '{service}'. Ready for submit_diagnosis."
 
         logs = _SHARED_STATE["scenario"]["logs"].get(service, [])
         _SHARED_STATE["fetched_logs"][service] = logs
 
-        not_fetched = [s for s in services if s not in _SHARED_STATE["fetched_logs"]]
         affected = _SHARED_STATE["scenario"]["ground_truth"]["affected_services"]
+        hint = f"Consider also fetching metrics from '{service}' using fetch_metrics."
         
         if service in affected:
-            if not_fetched:
-                return 0.02, f"Fetched {len(logs)} logs from '{service}'. Found errors. Services remaining: {not_fetched}"
-            return 0.02, f"Fetched {len(logs)} logs from '{service}'. Found errors. All services investigated. Ready for submit_diagnosis."
+            return 0.02, f"Fetched {len(logs)} logs from '{service}'. Found relevant errors. {hint}"
         else:
-            if not_fetched:
-                return 0.01, f"Fetched {len(logs)} logs from '{service}'. No critical issues. Try: {not_fetched}"
-            return 0.01, f"Fetched {len(logs)} logs from '{service}'. All services investigated. Ready for submit_diagnosis."
+            return 0.01, f"Fetched {len(logs)} logs from '{service}'. {hint}"
 
     def _handle_fetch_metrics(self, action: LogAnalysisAction) -> tuple:
         service = action.service
         services = _SHARED_STATE["scenario"]["services"]
         
         if not service:
-            return 0.0, f"Error: 'service' field required. Available services: {services}"
+            return 0.0, f"Error: 'service' field required. Available: {services}"
         
         if service not in services:
-            return 0.0, f"Error: Unknown service '{service}'. Available services: {services}"
+            return 0.0, f"Error: Unknown service '{service}'. Available: {services}"
         
         if service in _SHARED_STATE["fetched_metrics"]:
             not_fetched = [s for s in services if s not in _SHARED_STATE["fetched_metrics"]]
             if not_fetched:
-                return 0.0, f"Already fetched metrics from '{service}'. Services not yet checked: {not_fetched}"
-            return 0.0, f"Already fetched metrics from '{service}'. All checked. Use submit_diagnosis now."
+                return 0.0, f"Already have metrics from '{service}'. Try: {not_fetched}"
+            return 0.0, f"Already have metrics from '{service}'. Ready for submit_diagnosis."
 
         metrics = _SHARED_STATE["scenario"]["metrics"].get(service, {})
         _SHARED_STATE["fetched_metrics"][service] = metrics
 
-        not_fetched = [s for s in services if s not in _SHARED_STATE["fetched_metrics"]]
         affected = _SHARED_STATE["scenario"]["ground_truth"]["affected_services"]
+        metrics_summary = ", ".join([f"{k}={v}" for k, v in metrics.items()])
         
         if service in affected:
-            if not_fetched:
-                return 0.02, f"Fetched metrics from '{service}'. Anomalies detected. Remaining: {not_fetched}"
-            return 0.02, f"Fetched metrics from '{service}'. Anomalies detected. Ready for submit_diagnosis."
+            return 0.02, f"Metrics from '{service}': {metrics_summary}. Anomalies detected!"
         else:
-            if not_fetched:
-                return 0.01, f"Fetched metrics from '{service}'. Values normal. Try: {not_fetched}"
-            return 0.01, f"Fetched metrics from '{service}'. All checked. Ready for submit_diagnosis."
+            return 0.01, f"Metrics from '{service}': {metrics_summary}. Values normal."
 
     def _handle_submit_diagnosis(self, action: LogAnalysisAction) -> tuple:
         _SHARED_STATE["is_done"] = True
         _SHARED_STATE["diagnosis_submitted"] = True
 
-        investigated = len(_SHARED_STATE["fetched_logs"]) + len(_SHARED_STATE["fetched_metrics"])
+        logs_count = len(_SHARED_STATE["fetched_logs"])
+        metrics_count = len(_SHARED_STATE["fetched_metrics"])
         
-        if investigated < 2:
-            return 0.05, "Diagnosis submitted with insufficient investigation. Investigate more services for better score."
+        if logs_count < 2 and metrics_count < 1:
+            return 0.05, "Insufficient investigation. Fetch more logs AND metrics before diagnosing."
 
         ground_truth = _SHARED_STATE["scenario"]["ground_truth"]
         score = 0.0
@@ -185,13 +181,13 @@ class LogAnalysisEnvironment(Environment):
             score += 0.30
             feedback.append("Root cause: CORRECT")
         else:
-            feedback.append(f"Root cause: INCORRECT (was: {ground_truth['root_cause']})")
+            feedback.append(f"Root cause: WRONG (expected: {ground_truth['root_cause']})")
 
         if action.severity == ground_truth["severity"]:
             score += 0.15
             feedback.append("Severity: CORRECT")
         else:
-            feedback.append(f"Severity: INCORRECT (was: {ground_truth['severity']})")
+            feedback.append(f"Severity: WRONG (expected: {ground_truth['severity']})")
 
         if action.affected_services:
             predicted = set(action.affected_services)
@@ -210,7 +206,7 @@ class LogAnalysisEnvironment(Environment):
             score += 0.10
             feedback.append("Recommended action: CORRECT")
         else:
-            feedback.append(f"Recommended action: INCORRECT (was: {ground_truth['recommended_action']})")
+            feedback.append(f"Recommended action: WRONG (expected: {ground_truth['recommended_action']})")
 
         message = f"Diagnosis complete. Score: {score:.2f}/0.75. " + " | ".join(feedback)
         return score, message
@@ -222,14 +218,17 @@ class LogAnalysisEnvironment(Environment):
         metrics_fetched = list(_SHARED_STATE["fetched_metrics"].keys())
         all_investigated = set(logs_fetched) | set(metrics_fetched)
         not_investigated = [s for s in scenario["services"] if s not in all_investigated]
+        need_metrics = [s for s in logs_fetched if s not in metrics_fetched]
         
         steps_remaining = self.MAX_STEPS - _SHARED_STATE["step_count"]
         
         if not _SHARED_STATE["is_done"]:
             if steps_remaining <= 2 and not _SHARED_STATE["diagnosis_submitted"]:
-                message += f" URGENT: Only {steps_remaining} steps left! Submit diagnosis now using: submit_diagnosis with root_cause, severity, affected_services, recommended_action."
-            elif not not_investigated and not _SHARED_STATE["diagnosis_submitted"]:
-                message += " All services investigated. Submit your diagnosis."
+                message += f" URGENT: {steps_remaining} steps left! Submit diagnosis now."
+            elif need_metrics and steps_remaining > 2:
+                message += f" Tip: Fetch metrics from {need_metrics} for better diagnosis."
+            elif not not_investigated and not need_metrics and not _SHARED_STATE["diagnosis_submitted"]:
+                message += " All data collected. Submit your diagnosis."
         
         return LogAnalysisObservation(
             alert_title=scenario["alert"]["title"],
